@@ -1,0 +1,699 @@
+---
+title: "Time Series Project"
+author: "Akarsh Sahu"
+date: "August 23, 2019"
+output: html_document
+---
+
+### Load required libraries
+```{r, include = FALSE , warning=FALSE}
+library(googledrive)
+require(xts)
+require(zoo)
+require(tseries)
+require(forecast)
+library(ggplot2)
+library(reshape2)
+require(vars)
+library(formattable)
+require(quantmod)
+```
+
+
+### Load Datset
+```{r}
+set.seed(123123)
+dataPath <- "C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project"
+data = read.csv("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\Metro_MedianListingPricePerSqft_TopTier.csv",header = TRUE)
+data.emp = read.csv("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\EmploymentNumbers.csv",header = TRUE)
+```
+
+
+### Select Cities
+```{r}
+metros = c('New York, NY',
+           'San Francisco, CA',
+           'Chicago, IL',
+           'Los Angeles-Long Beach-Anaheim, CA',
+           'Miami-Fort Lauderdale, FL')
+
+data_1 <- data[data$RegionName %in% metros,]
+data_1 <- data_1[,-2]
+```
+
+
+### Transform Datasets & Split into Train & Test set
+```{r}
+# Transform price data
+data_2 <- as.data.frame(t(data_1)[-1,])
+colnames(data_2) <- t(data_1)[1,]
+data_2 <- apply(data_2, c(1,2), function(x) as.numeric(x))
+ts_1 <- ts(data_2, start = c(2010,1), frequency = 12)
+
+ts_1_train = window(ts_1,start =c(2010,1),end = c(2018,7), frequency=12)
+ts_1_test = window(ts_1,start =c(2018,8), frequency=12)
+
+# Transform Employment Growth Data 
+
+ts_emp <- ts(data.emp, start = c(2010,1), frequency = 12)
+ts_emp <- ts_emp[,-1]
+ts_emp_train = window(ts_emp,start =c(2010,1),end = c(2018,7), frequency=12)
+ts_emp_test = window(ts_emp,start =c(2018,8), frequency=12)
+
+```
+
+
+### Plot Timeseries for price per sqft and employment (in `000s)
+```{r,fig.width=12,fig.height=8}
+plot_data <- cbind(as.data.frame(ts_1_train), Date = seq(ISOdate(2010,01,01), by = "month", length.out = 103))
+plot_data_1 <- melt(plot_data, id = "Date")
+ggplot(plot_data_1,aes(x=Date,y=value,colour=variable)) + geom_line(size = 1.2) + theme(legend.position="bottom") + ylab("Median  Listing Price Per Sqft") + ggtitle("Housing Listing Prices per sqft")
+
+plot_emp_data <- cbind(as.data.frame(ts_emp_train), Date = seq(ISOdate(2010,01,01), by = "month", length.out = 103))
+plot_emp_data_1 <- melt(plot_emp_data, id = "Date")
+ggplot(plot_emp_data_1,aes(x=Date,y=value,colour=variable)) + geom_line(size = 1.2) + theme(legend.position="bottom") + ylab("Employment(in 1000s)") + ggtitle("Employment Nos. (in 1000s)")
+```
+
+
+### Decomposing the time series plots
+```{r}
+for (i in 1:5){
+  
+  print(autoplot(decompose(ts_1_train[,i]), main = colnames(ts_1_train)[i]))
+}
+
+```
+
+
+### ACF Plots
+```{r,fig.width=12,fig.height=12}
+par(mfcol=c(3,2))
+# the stationary signal and ACF
+for(i in 1:5){
+plot(plot_data$Date,ts_1_train[,i],
+     type='l',col='red',
+     xlab = "time (t)",
+     ylab = "Median  Listing Price Per Sqft",
+     main = colnames(plot_data)[i])
+acf(ts_1_train[,i],lag.max = length(ts_1_train[,i]),
+         xlab = "lag #", ylab = 'ACF',main=' ')
+pacf(ts_1_train[,i],lag.max = length(ts_1_train[,i]),
+         xlab = "lag #", ylab = 'PACF',main=' ')
+
+}
+
+
+```
+
+
+##### Qualitatively, We can see and conclude from the ACFs that all the time-series are not stationary (since later lags exceed the confidence interval).
+
+
+### Stationarity tests
+```{r warning=FALSE}
+for (i in 1:5){
+print(colnames(ts_1_train)[i])
+print(adf.test(ts_1_train[,i]))
+
+}
+```
+
+
+##### As can be seen, the time series data of all the 5 cities except Los-Angeles are non-stationary at 0.05 significance level confirming our hypothesis from ACF plots.
+
+
+### Test for Independence
+```{r}
+lag.length = 25
+
+for(i in 1:5){
+  print(paste0("Box Test: ", colnames(plot_data)[i]))
+  print(Box.test(ts_1_train[,i], lag=lag.length, type="Ljung-Box")) # test stationary signal
+}
+
+```
+
+
+##### Again the above Box Test shows that there is significance evidence for non-zero correlations at given lags(1-25).
+
+
+### Differencing
+```{r warning=FALSE}
+#adf test for New York, NY"
+adf.test(diff(ts_1[,1]))
+
+#adf test for Los Angeles-Long Beach-Anaheim, CA
+adf.test(diff(ts_1[,2]))
+
+#adf test for Chicago, IL
+adf.test(diff(ts_1[,3], differences = 2))
+
+#adf test for Miami-Fort Lauderdale, FL
+adf.test(diff(ts_1[,4]))
+
+#adf test for San Francisco, CA
+adf.test(diff(ts_1[,5]))
+```
+
+##### Good News, We can fix the stationarity issue by differencing. We can take care of the same by passing differencing arguments in the models
+
+##### We need to take care of the changing variance in each of the time-series by performing BoxCox transformations.
+
+```{r,fig.width=12,fig.height=12}
+par(mfrow = c(3,2))
+ts_2 =ts_1_train
+for(i in 1:5){
+  ts_2[,i] <- BoxCox(ts_2[,i],0) 
+  plot(ts_2[,i],
+     type='l',col='red',
+     xlab = "time (t)",
+     ylab = "Median  Listing Price Per Sqft",
+     main = colnames(plot_data)[i])
+}
+```
+
+```{r,fig.width=12,fig.height=12}
+par(mfrow = c(3,2))
+ts_emp_2 =ts_emp_train
+for(i in 1:5){
+  ts_emp_2[,i] <- BoxCox(ts_emp_2[,i],0) 
+  plot(ts_emp_2[,i],
+     type='l',col='blue',
+     xlab = "time (t)",
+     ylab = "Employment in ('000s)",
+     main = colnames(plot_data)[i])
+}
+```
+
+##### As can be seen, the above time-series have somewhat constant variance across as compared to the untransformed time-series.
+
+#### Plotting correlation between employment and price per sqft
+```{r,fig.width=12,fig.height=12}
+plot_final_data <- as.data.frame(cbind(plot_data, plot_emp_data))
+plot_final_data <- plot_final_data[-ncol(plot_final_data)]
+
+plot_final_data <- plot_final_data[,c(6,1,2,3,4,5,7,8,9,10,11)]
+colnames(plot_final_data) <- c("Date", "NewYork_Price", "LA_Price", "Chicago_Price", "Miami_Price", "SFO_Price", "NewYork_Empl", "LA_Empl", "Chicago_Empl", "Miami_Empl", "SFO_Empl")
+
+par(mfrow = c(2,2))
+for (i in 1 : 5){
+  dat = as.data.frame(cbind(plot_final_data[,i + 1], plot_final_data[,i + 6]))
+  colnames(dat) <- c("Price", "Employment")
+  
+  plot(x = dat[,2], y = dat[,1],
+       xlab = 'Monthly Employment', ylab = 'Price per Sqft',
+       main = paste('Monthly Employment vs Price per Sqft for ',colnames(ts_1_train)[i]), col= 'red', pch = 15) + 
+  text(c(2,2),c(37,35),labels=c("Non-case","Case"))
+}
+
+df <- as.data.frame(matrix(NA, nrow = 1, ncol = 5))
+rownames(df) <- "Correlation b/w Housing Price and Employment"
+
+for(i in 1:5){
+  df[1,i] <- cor(plot_final_data[,i + 1], plot_final_data[,i + 6])
+  colnames(df)[i] <- colnames(ts_emp)[i]
+  
+}
+
+df
+
+```
+
+#### Testing using adf test, and acf by using differencing on log of price and employment.
+```{r warning=FALSE}
+ts_log = log(ts_1_train)
+#head(ts_log)
+
+
+
+par(mfrow = c(2,2))
+for(i in 1:5){
+   print(colnames(ts_log)[i])  
+  print(adf.test(diff(ts_log[,i],differences= 2)))
+  plot(diff(ts_log[,i],differences = 2),main = colnames(ts_log)[i], ylab = 'd=2 on log(price)', type='l',col='red')
+  acf(diff(ts_log[,i],differences = 2),lag.max = length(ts_1_train[,i]),
+         xlab = "lag #", ylab = 'ACF',main=' ')
+
+}
+
+
+
+```
+
+
+#### Differencing logs of employment data
+```{r warning=FALSE}
+ts_emp_train_log = log(ts_emp_train)
+#head(ts_emp_train_log)
+par(mfrow = c(2,2))
+for(i in 1:5){
+   print(colnames(ts_emp_train_log)[i])  
+  print(adf.test(diff(ts_emp_train_log[,i],differences= 2)))
+  plot(diff(ts_emp_train_log[,i],differences = 2),main = colnames(ts_emp_train_log)[i], ylab = 'd=2 on log(employment)', type='l',col='red')
+  acf(diff(ts_emp_train_log[,i],differences = 2),lag.max = length(ts_1_train[,i]),
+         xlab = "lag #", ylab = 'ACF',main=' ')
+
+}
+
+
+```
+
+
+#### Applying ts linear model on each of the cities with y = log(price) and x = log(employment)
+```{r}
+
+mod.lm.ny = tslm(formula = ts_log[,1] ~ ts_emp_train_log[,1] )
+mod.lm.la = tslm(formula = ts_log[,2] ~ ts_emp_train_log[,2] )
+mod.lm.ch = tslm(formula = ts_log[,3] ~ ts_emp_train_log[,3] )
+mod.lm.mi = tslm(formula = ts_log[,4] ~ ts_emp_train_log[,4] )
+mod.lm.sf = tslm(formula = ts_log[,5] ~ ts_emp_train_log[,5] )
+```
+
+
+#### Plotting regression line vs observations to see goodness of fit
+```{r}
+par(mfrow= c(1,1))
+ggplot()+
+  geom_point(aes(x = ts_emp_train_log[,1], y = ts_log[,1]),color ='red')+
+  geom_line(aes(x = ts_emp_train_log[,1], y = mod.lm.ny$fitted.values), color = 'blue')+
+  xlab('log employment')+
+  ylab('Fitted log price ')+
+  ggtitle('Fitted Trend for NY')+
+  theme_bw()
+```
+
+
+#### Los Angeles
+```{r}
+ggplot()+
+  geom_point(aes(x = ts_emp_train_log[,2], y = ts_log[,2]),color ='red')+
+  geom_line(aes(x = ts_emp_train_log[,2], y = mod.lm.la$fitted.values), color = 'blue')+
+  xlab('log employment')+
+  ylab('Fitted log price ')+
+  ggtitle('Fitted Trend for LA')+
+  theme_bw()
+```
+
+
+#### Chicago
+```{r}
+ggplot()+
+  geom_point(aes(x = ts_emp_train_log[,3], y = ts_log[,3]),color ='red')+
+  geom_line(aes(x = ts_emp_train_log[,3], y = mod.lm.ch$fitted.values), color = 'blue')+
+  xlab('log employment')+
+  ylab('Fitted log price ')+
+  ggtitle('Fitted Trend for Chicago')+
+  theme_bw()
+```
+
+
+#### Miami
+```{r}
+ggplot()+
+  geom_point(aes(x = ts_emp_train_log[,4], y = ts_log[,4]),color ='red')+
+  geom_line(aes(x = ts_emp_train_log[,4], y = mod.lm.mi$fitted.values), color = 'blue')+
+  xlab('log employment')+
+  ylab('Fitted log price ')+
+  ggtitle('Fitted Trend for Miami')+
+  theme_bw()
+```
+
+
+#### SFO
+```{r}
+ggplot()+
+  geom_point(aes(x = ts_emp_train_log[,5], y = ts_log[,5]),color ='red')+
+  geom_line(aes(x = ts_emp_train_log[,5], y = mod.lm.sf$fitted.values), color = 'blue')+
+  xlab('log employment')+
+  ylab('Fitted log price ')+
+  ggtitle('Fitted Trend for SFO')+
+  theme_bw()
+```
+
+
+#### Check residuals & summary for lm model for NY
+```{r}
+summary(mod.lm.ny)
+checkresiduals(mod.lm.ny)
+```
+
+
+#### Check residuals & summary for lm model for LA
+```{r}
+summary(mod.lm.la)
+checkresiduals(mod.lm.la)
+```
+
+
+#### Check residuals & summary for lm model for Chicago
+```{r}
+summary(mod.lm.ch)
+checkresiduals(mod.lm.ch)
+```
+
+
+#### Check residuals & summary for lm model for Miami
+```{r}
+summary(mod.lm.mi)
+checkresiduals(mod.lm.mi)
+```
+
+
+#### Check residuals & summary for lm model for SFO
+```{r}
+summary(mod.lm.sf)
+checkresiduals(mod.lm.sf)
+```
+
+
+#### Taking into account the above analysis we do an auto arima with regression with lambda =0 for log transformation
+
+
+####NY
+```{r}
+mod.arima.ny = auto.arima(ts_1_train[,1], xreg = ts_emp_train[,1], lambda = 0)
+summary(mod.arima.ny)
+ggtsdisplay(arima.errors(mod.arima.ny),
+            main = 'ARIMA Errors')
+checkresiduals(mod.arima.ny)
+```
+
+
+####LA
+```{r}
+mod.arima.la = auto.arima(ts_1_train[,2], xreg = ts_emp_train[,2], lambda = 0)
+summary(mod.arima.la)
+ggtsdisplay(arima.errors(mod.arima.la),
+            main = 'ARIMA Errors')
+checkresiduals(mod.arima.la)
+```
+
+
+####Chicago
+```{r}
+mod.arima.ch = auto.arima(ts_1_train[,3], xreg = ts_emp_train[,3], lambda = 0)
+summary(mod.arima.ch)
+ggtsdisplay(arima.errors(mod.arima.ch),
+            main = 'ARIMA Errors')
+checkresiduals(mod.arima.ch)
+```
+
+
+####Miami
+```{r}
+mod.arima.mi = auto.arima(ts_1_train[,4], xreg = ts_emp_train[,4], lambda = 0)
+summary(mod.arima.mi)
+ggtsdisplay(arima.errors(mod.arima.mi),
+            main = 'ARIMA Errors')
+checkresiduals(mod.arima.mi)
+```
+
+
+####SFO
+```{r}
+mod.arima.sf = auto.arima(ts_1_train[,5], xreg = ts_emp_train[,5], lambda = 0)
+summary(mod.arima.sf)
+ggtsdisplay(arima.errors(mod.arima.sf),
+            main = 'ARIMA Errors')
+checkresiduals(mod.arima.sf)
+```
+
+
+#### Aggregating arima models
+
+
+```{r}
+model_arima_er = list(0)
+model_arima_er = list(NY = mod.arima.ny,
+                   LA = mod.arima.la,
+                   CH = mod.arima.ch,
+                   MI = mod.arima.mi,
+                   SF = mod.arima.sf)
+```
+
+
+#### Forecast employment for next 12 months
+
+
+```{r}
+forecast_emp <- list(0)
+for(i in 1:5){
+  forecast_emp[[i]] <- as.data.frame(forecast(ts_emp_train[,i],h=12))[,1]
+}
+forecast_emp[[1]]
+```
+
+
+#### Forecast prices for next 12 months from forecasted emp data
+```{r}
+forecast_arima_er <- list(0) 
+accuracy_arima_er <- list(0)
+for(i in 1:5){
+  forecast_arima_er[[i]] <- as.data.frame(forecast(model_arima_er[[i]],h=12,xreg = forecast_emp[[i]]))[,1]
+}
+for(i in 1:5){
+ accuracy_arima_er[[i]] <- as.data.frame(accuracy(forecast_arima_er[[i]], ts_1_test[,i]))
+}
+```
+
+
+#### Using VARS for modeling and forecasting
+```{r}
+ts_emp_test_log = log(ts_emp_test)
+#par(mar=c(1,1,1,1))
+```
+
+```{r, fig.width= 12, fig.height = 10}
+
+var.ny <- vars::VAR( cbind(ts_log[,1],ts_emp_train_log[,1]),p = 1,type = 'both',season = 12)
+vars::serial.test(var.ny, lags.pt = 12,type='PT.asymptotic')
+var.la <- vars::VAR( cbind(ts_log[,2],ts_emp_train_log[,2]),p = 2,type = 'both',season = 12)
+vars::serial.test(var.la, lags.pt = 12,type='PT.asymptotic')
+var.ch <- vars::VAR( cbind(ts_log[,3],ts_emp_train_log[,3]),p = 3,type = 'both',season = 12)
+vars::serial.test(var.ch, lags.pt = 12,type='PT.asymptotic')
+var.mi <- vars::VAR( cbind(ts_log[,4],ts_emp_train_log[,4]),p = 3,type = 'both',season = 12)
+vars::serial.test(var.mi, lags.pt = 12,type='PT.asymptotic')
+var.sf <- vars::VAR( cbind(ts_log[,5],ts_emp_train_log[,5]),p = 3,type = 'both',season = 12)
+vars::serial.test(var.sf, lags.pt = 12,type='PT.asymptotic')
+
+model_var = list(NY = var.ny,
+                   LA = var.la,
+                   CH = var.ch,
+                   MI = var.mi,
+                   SF = var.sf)
+
+model_var$NY
+
+par(mfrow = c(3,2))
+plot(model_var$NY)
+plot(model_var$LA)
+plot(model_var$CH)
+plot(model_var$MI)
+plot(model_var$SF)
+```
+
+
+#### Forecasting and accuracy of var models for all cities
+```{r}
+
+forecast_var <- list(0) 
+accuracy_var <- list(0)
+for(i in 1:5){
+  forecast_var[[i]] <- as.data.frame(forecast(model_var[[i]],h=12,xreg = ts_emp_train_log[,i])$forecast[[1]])[,1]
+  forecast_var[[i]] <- exp(unlist(forecast_var[[i]]))
+  accuracy_var [[i]] <- as.data.frame(accuracy(forecast_var[[i]], x = ts_1_test[,i]))
+}
+
+```
+
+
+#### Model Comparisons
+```{r}
+model_hw <- readRDS("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\model_hw.rds")
+model_sarima <- readRDS("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\model_sarima.rds")
+forecast_hw <- readRDS("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\forecast_hw.rds")
+forecast_sarima <- readRDS("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\forecast_sarima.rds")
+accuracy_hw <- readRDS("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\accuracy_hw.rds")
+accuracy_sarima <- readRDS("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\accuracy_sarima.rds")
+
+```
+
+
+#### HW models summary and residuals
+```{r}
+for (i in 1:5){
+summary(model_hw[[i]])
+checkresiduals(model_hw[[i]])
+}
+```
+
+
+#### sARIMA models summary and residuals
+```{r}
+for (i in 1:5) {
+summary(model_sarima[[i]])
+checkresiduals(model_sarima[[i]])
+}
+```
+
+
+#### Model Quality Metrics
+```{r}
+for(i in 1:5){
+  #print(paste0(Model Quality for "text(1, 1, "Change the font just for this text",
+   #  font=list(family="Helvetica", face="bold-italic")))
+  model_quality <- as.data.frame(rbind(
+    cbind(AIC(model_hw[[i]]$model), BIC(model_hw[[i]]$model)),
+    cbind(model_sarima[[i]]$aic, model_sarima[[i]]$bic),
+    cbind(model_arima_er[[i]]$aic, model_arima_er[[i]]$bic),
+    cbind(AIC(model_var[[i]]), BIC(model_var[[i]]))
+    ))
+    model_quality <- round(model_quality,2)
+    model_quality <- as.data.frame(cbind(c( "HW ADDITIVE", "SARIMA", "REGRESSION WITH AR ERR", "VAR"), model_quality))
+    colnames(model_quality) <- c(colnames(ts_emp_test)[i],"AIC", "BIC")
+    print(formattable(model_quality, align =c("l","c","c","c","c", "c", "c", "c", "r"), 
+            list(`Indicator Name` = formatter(
+              "span", style = ~ style(color = "grey",font.weight = "bold")) 
+)))
+}
+
+```
+
+
+#### Model Forecast vs Actual
+```{r, fig.height = 6, fig.width = 8}
+
+model <- c( "HW ADDITIVE", "SARIMA", "REGRESSION WITH AR ERR", "VAR")
+y_axis <- data.frame(rbind(c(400,600), c(550, 650), c(200, 275), c(300,400), c(650,850)))
+
+for(i in 1:5){
+  df <- data.frame(cbind(DATE = 1:12, ACTUAL = ts_1_test[,i], ETS_Model = unlist(forecast_hw[[i]]), SARIMA_Model =  unlist(forecast_sarima[[i]]),ARIMAER_Model = unlist(forecast_arima_er[[i]]), VAR_Model = forecast_var[[i]]))
+  df$Ensemble_Model <- rowMeans(df[,c(3,4,5,6)])
+   #par(xpd=T, mar=par()$mar+c(0,0,0,5))
+  plot(1:12, df$ACTUAL, type = 'b', col = 'black', 
+                xlab = "Aug'2018 - Jul'2019", ylab = "Forecast(Models) vs Actual", ylim = c(y_axis[i,1], y_axis[i,2]))
+  lines(1:12, df$HW_Model, type = 'b', col = 'blue')
+  lines(1:12, df$SARIMA_Model, type = 'b', col = 'green')
+  lines(1:12, df$ARIMAER_Model, type = 'b', col = 'brown')
+  lines(1:12, df$VAR_Model, type = 'b', col = 'red')
+  lines(1:12, df$Ensemble_Model, type = 'b', col = 'magenta')
+  
+  
+  legend("bottomright",
+                legend = c( "ACTUAL","HW ADD", "SARIMA", "REGRESSION WITH AR ERR", "VAR", "ENSEMBLE MODEL"), 
+                lty = c(1,2), pch=c(1,3),
+                col = c('black','blue', 'green', 'brown', 'red', "magenta"))
+  
+  legendstyle = list("x"=100, "y"=1)
+layoutstyle = list(legend=legendstyle)
+}
+
+
+```
+
+
+#### Model Accuracy Metrics
+```{r}
+for(i in 1:5){
+  df <- data.frame(cbind(DATE = 1:12, ACTUAL = ts_1_test[,i], ETS_Model = unlist(forecast_hw[[i]]), SARIMA_Model =  unlist(forecast_sarima[[i]]),ARIMAER_Model = unlist(forecast_arima_er[[i]]), VAR_Model = forecast_var[[i]]))
+
+  df$Ensemble_Model <- rowMeans(df[,c(3,4,5,6)])
+  
+  model_accuracy <- as.data.frame(rbind(
+    accuracy_hw[[i]][1:5], accuracy_sarima[[i]][1:5], accuracy_arima_er[[i]][1:5], accuracy_var[[i]][1:5], accuracy(df$Ensemble_Model, df$ACTUAL)[1:5]
+    ))
+    model_accuracy <- round(model_accuracy,2)
+    rownames(model_accuracy) <- c()
+    model_accuracy <- as.data.frame(cbind(c( "HW ADDITIVE", "SARIMA", "REGRESSION WITH AR ERR", "VAR", "ENSEMBLE"), model_accuracy))
+    colnames(model_accuracy) <- c(colnames(ts_emp_test)[i], "ME", "RMSE",  "MAE", "MPE", "MAPE")
+    print(formattable(model_accuracy, align =c("l","c","c","c","c", "c", "c", "c", "r"), 
+            list(`Indicator Name` = formatter(
+              "span", style = ~ style(color = "grey",font.weight = "bold")) 
+)))
+}
+
+```
+
+
+#### Percentage change(Conclusion Slides)
+```{r}
+# NY using VAR model
+median(forecast_var[[1]])
+mean(round(Delt(as.numeric(forecast_var[[1]]))*100,2), na.rm = TRUE)
+sd(round(Delt(as.numeric(forecast_var[[1]]))*100,2),na.rm = TRUE)
+# LA using VAR model
+fc_en_la = cbind(forecast_hw[[2]],
+          forecast_sarima[[2]],
+          forecast_arima_er[[2]],
+          forecast_var[[2]])
+forecast_ensemble_la = rowMeans(fc_en_la)
+median(forecast_ensemble_la)
+mean(round(Delt(as.numeric(forecast_ensemble_la))*100,2),na.rm = TRUE)
+sd(round(Delt(as.numeric(forecast_ensemble_la))*100,2),na.rm = TRUE)
+# Chicago using Ensemble model
+fc_en_ch = cbind(forecast_hw[[3]],
+          forecast_sarima[[3]],
+          forecast_arima_er[[3]],
+          forecast_var[[3]])
+forecast_ensemble_ch = rowMeans(fc_en_ch)
+median(forecast_ensemble_ch)
+mean(round(Delt(as.numeric(forecast_ensemble_ch))*100,2),na.rm = TRUE)
+sd(round(Delt(as.numeric(forecast_ensemble_ch))*100,2),na.rm = TRUE)
+# Miami using Ensemble model
+fc_en_mi = cbind(forecast_hw[[4]],
+          forecast_sarima[[4]],
+          forecast_arima_er[[4]],
+          forecast_var[[4]])
+
+forecast_ensemble_mi = rowMeans(fc_en_mi)
+forecast_ensemble_mi
+sd(round(Delt(forecast_ensemble_mi)*100,2), na.rm = TRUE)
+median(forecast_ensemble_mi)
+mean(round(Delt(forecast_ensemble_mi)*100,2), na.rm = TRUE)
+# SFO using ensemble model
+fc_en_sf = cbind(forecast_hw[[5]],
+          forecast_sarima[[5]],
+          forecast_arima_er[[5]],
+          forecast_var[[5]])
+
+forecast_ensemble_sf = rowMeans(fc_en_sf)
+sd(round(Delt(forecast_ensemble_sf)*100,2), na.rm = TRUE)
+median(forecast_ensemble_sf)
+mean(round(Delt(forecast_ensemble_sf)*100,2), na.rm = TRUE)
+##
+median.forecast = round(c(median(forecast_var[[1]]),
+                    median(forecast_var[[2]]),
+                    median(forecast_hw[[3]]),
+                    median(forecast_ensemble_mi),
+                    median(forecast_ensemble_sf)),2)
+
+perc.change = round(c(mean(round(Delt(as.numeric(forecast_var[[1]]))*100,2), na.rm = TRUE),
+                mean(round(Delt(as.numeric(forecast_var[[2]]))*100,2), na.rm = TRUE),
+                mean(round(Delt(as.numeric(forecast_hw[[3]]))*100,2),na.rm = TRUE),
+                mean(round(Delt(forecast_ensemble_mi)*100,2), na.rm = TRUE),
+                mean(round(Delt(forecast_ensemble_sf)*100,2), na.rm = TRUE)),2)
+
+sd.perc.change = round(c(sd(round(Delt(as.numeric(forecast_var[[1]]))*100,2),na.rm = TRUE),
+                   sd(round(Delt(as.numeric(forecast_var[[2]]))*100,2),na.rm = TRUE),
+                   sd(round(Delt(as.numeric(forecast_hw[[3]]))*100,2),na.rm = TRUE),
+                   sd(round(Delt(forecast_ensemble_mi)*100,2), na.rm = TRUE),
+                   sd(round(Delt(forecast_ensemble_sf)*100,2), na.rm = TRUE)),2)
+gobankrate.com = c(5,3,4,1,2)
+comparison.table = cbind(colnames(ts_1),
+                         as.numeric(median.forecast),
+                         as.numeric(perc.change),
+                         as.numeric(sd.perc.change),
+                         gobankrate.com)
+
+colnames(comparison.table)=c('Metro',
+                             'Median Forecasted Price',
+                             'Mean Monthly Mrice Rise',
+                             'Std Dev in Price Change',
+                             'GOBankingRates Rank')
+comparison.table=data.frame(comparison.table)
+
+formattable(comparison.table, 
+            align =c("l","c","c","c","c", "c", "c", "c", "r"), 
+            list(`Indicator Name` = formatter(
+              "span", style = ~ style(color = "grey",font.weight = "bold")) ))
+```

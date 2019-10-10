@@ -1,0 +1,317 @@
+---
+title: "Hazim"
+author: "Hazim"
+date: "August 23, 2019"
+output: html_document
+---
+```{r}
+##########loading data and essential packages
+list.of.packages <- c("expsmooth", "fpp2","fitdistrplus", "logspline","readxl", "xts","forecast", "fma","lmtest", "tseries","Quandl", "fpp","urca", "TSA","tidyverse","gdata","XLConnect")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages,dependencies=TRUE)
+
+library('expsmooth')
+library('fpp2')
+library('fitdistrplus')
+library('logspline')
+library('xts')
+library('forecast');
+library('fma')
+library('lmtest')
+library('tseries')
+library('Quandl')
+library('fpp');
+library('urca')
+library('TSA')
+library('readxl')
+library('tidyverse')
+library('gdata')
+library(ggplot2)
+
+set.seed(123123)
+dataPath <- "C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project"
+data = read.csv("C:\\Users\\akars\\OneDrive\\Desktop\\MScA Spring\\Time Series Analysis\\Project\\Metro_MedianListingPricePerSqft_TopTier.csv",header = TRUE)
+```
+
+
+### Select Cities
+```{r}
+metros = c('New York, NY',
+           'San Francisco, CA',
+           'Chicago, IL',
+           'Los Angeles-Long Beach-Anaheim, CA',
+           'Miami-Fort Lauderdale, FL')
+
+data_1 <- data[data$RegionName %in% metros,]
+data_1 <- data_1[,-2]
+```
+
+### Transform Dataset & Split into Train & Test set
+
+```{r}
+# Transform price data
+data_2 <- as.data.frame(t(data_1)[-1,])
+colnames(data_2) <- t(data_1)[1,]
+data_2 <- apply(data_2, c(1,2), function(x) as.numeric(x))
+ts_1 <- ts(data_2, start = c(2010,1), frequency = 12)
+
+ts_1_train = window(ts_1,start =c(2010,1),end = c(2018,7), frequency=12)
+ts_1_test = window(ts_1,start =c(2018,8), frequency=12)
+
+```
+
+
+#### Taking into account the above analysis we do Holt-Winters'
+####NY
+```{r}
+#Holt-Winters' for New York, NY
+
+NY.hw.add <- hw(ts_1_train[,1],seasonal="additive")
+NY.hw.mul <- hw(ts_1_train[,1],seasonal="multiplicative") 
+
+summary(NY.hw.add)
+summary(NY.hw.mul)
+
+checkresiduals(NY.hw.add)
+checkresiduals(NY.hw.mul)
+```
+
+##### For New York,Additive model perofrms better
+
+####SF
+```{r}
+#Holt-Winters' for San Francisco, CA
+
+SF.hw.add <- hw(ts_1_train[,5],seasonal="additive")
+SF.hw.mul <- hw(ts_1_train[,5],seasonal="multiplicative") 
+
+summary(SF.hw.add)
+summary(SF.hw.mul)
+
+checkresiduals(NY.hw.add)
+checkresiduals(NY.hw.mul)
+
+```
+
+##### For San Francisco,Additive model perofrms better
+
+```{r}
+#Holt-Winters' for Chicago, IL
+
+CH.hw.add <- hw(ts_1_train[,3],seasonal="additive")
+CH.hw.mul <- hw(ts_1_train[,3],seasonal="multiplicative") 
+
+summary(CH.hw.add)
+summary(CH.hw.mul)
+
+checkresiduals(CH.hw.add)
+checkresiduals(CH.hw.mul)
+
+```
+
+##### For Chicago, additive performs better
+
+####LA
+```{r}
+#Holt-Winters' for Los Angeles-Long Beacrh-Anaheim, CA
+
+CA.hw.add <- hw(ts_1_train[,2],seasonal="additive")
+CA.hw.mul <- hw(ts_1_train[,2],seasonal="multiplicative") 
+summary(CA.hw.add)
+summary(CA.hw.mul)
+
+checkresiduals(CA.hw.add)
+checkresiduals(CA.hw.mul)
+
+```
+
+##### For LA, additive performs better
+
+####MI
+```{r}
+#Holt-Winters' for Los Angeles-Long Beacrh-Anaheim, MI
+
+MI.hw.add <- hw(ts_1_train[,4],seasonal="additive")
+MI.hw.mul <- hw(ts_1_train[,4],seasonal="multiplicative") 
+
+summary(MI.hw.add)
+summary(MI.hw.mul)
+
+checkresiduals(MI.hw.add)
+checkresiduals(MI.hw.mul)
+
+```
+
+##### For LA, additive performs better
+
+##### The result shows that Holt-Winters' additive model have the lowest RMSE and thus provide a better forecast than others
+
+
+
+
+
+
+#### Taking into account the above analysis we do an sarima with regression with lambda =0 for log transformation
+####NY
+```{r}
+sarima.NY<-auto.arima(ts_1_train[,1],lambda = 0)
+eacf(ts_1_train[,1])
+(EACF1 <- Arima(ts_1_train[,1], order=c(0,1,1),seasonal = c(1,1,1)))
+sarres.NY<-sarima.NY$residuals
+checkresiduals(sarima.NY)
+##the plot still have some unusual behaviour around 2016 and 2018 but behave normally otherwise
+#the residual do seems to be fairly normal
+##the ACF is within the confidence bound at all lags which suggest the model fits better than the arima
+
+```
+####SF
+```{r}
+sarima.SF<-auto.arima(ts_1_train[,5],lambda = 0)
+eacf(ts_1_train[,5])
+(EACF1 <- Arima(ts_1_train[,5], order=c(0,2,0),seasonal = c(2,0,1)))
+sarres.SF<-sarima.SF$residuals
+checkresiduals(sarima.SF)
+##the plot behaves normally typical of a good model
+#the residual seems to be normally distrbuted
+##the ACF is within the confidence bound at all lags which suggest the model fits better than the arima
+```
+####CH
+```{r}
+sarima.CH<-auto.arima(ts_1_train[,3],lambda = 0)
+eacf(ts_1_train[,3])
+(EACF1 <- Arima(ts_1_train[,3], order=c(1,2,1),seasonal = c(0,0,2)))
+sarres.CH<-sarima.CH$residuals
+checkresiduals(sarima.CH)
+##the plot of the residuals shows that residuals are well behaved
+#the residual do seems to be  normally distributed
+##the ACF is within the confidence bound at all lags which suggest the model fits better than the arima
+
+```
+####CA
+```{r}
+sarima.CA<-auto.arima(ts_1_train[,2],lambda = 0)
+eacf(ts_1_train[,2])
+(EACF1 <- Arima(ts_1_train[,2], order=c(0,1,1),seasonal = c(1,1,1)))
+sarres.CA<-sarima.CA$residuals
+checkresiduals(sarima.CA)
+##the residuals plot behave normally and the trend is constant overtime.
+#the residual do seems to be fairly normal
+##the ACF is within the confidence bound at all lags except lag 11 (and this is due to chance) which suggest the model fits better than the arima
+##forecast with SARIMA
+
+```
+####MI
+```{r}
+sarima.MI<-auto.arima(ts_1_train[,4],lambda = 0)
+eacf(ts_1_train[,4])
+(EACF1 <- Arima(ts_1_train[,4], order=c(0,1,1),seasonal = c(1,1,1)))
+sarres.MI<-sarima.MI$residuals
+checkresiduals(sarima.MI)
+##the plot behaves well and exhibits a constant trend
+#the residual seem to be normally distributed
+##the ACF is within the confidence bound but exceeds at some lag and this is likely due to chance
+
+```
+
+
+
+####Comparing Holt-Winters’ and sarima
+####NY
+```{r}
+######comparing Holt-Winters’ and sarima######
+stat.NY<-c(NY.hw.mul$aic,sarima.NY$aic,NY.hw.mul$bic,sarima.NY$bic)
+mat.NY<-matrix(stat.NY,nrow=2,ncol=2,byrow=F)
+row<-c("holt mult","sarima")
+column<-c("aic","bic")
+colnames(mat.NY)<-column
+rownames(mat.NY)<-row
+mat.NY
+
+```
+####SF
+```{r}
+######comparing Holt-Winters’ and sarima######
+stat.SF<-c(SF.hw.mul$aic,sarima.SF$aic,SF.hw.mul$bic,sarima.SF$bic)
+mat.SF<-matrix(stat.SF,nrow=2,ncol=2,byrow=F)
+row<-c("holt mult","sarima")
+column<-c("aic","bic")
+colnames(mat.SF)<-column
+rownames(mat.SF)<-row
+mat.SF
+
+```
+####CH
+```{r}
+######comparing Holt-Winters’ and sarima######
+stat.CH<-c(CH.hw.mul$aic,sarima.CH$aic,CH.hw.mul$bic,sarima.CH$bic)
+mat.CH<-matrix(stat.CH,nrow=2,ncol=2,byrow=F)
+row<-c("holt mult","sarima")
+column<-c("aic","bic")
+colnames(mat.CH)<-column
+rownames(mat.CH)<-row
+mat.CH
+
+```
+####CA
+```{r}
+######comparing Holt-Winters’ and sarima######
+stat.CA<-c(CA.hw.mul$aic,sarima.CA$aic,CA.hw.mul$bic,sarima.CA$bic)
+mat.CA<-matrix(stat.CA,nrow=2,ncol=2,byrow=F)
+row<-c("holt mult","sarima")
+column<-c("aic","bic")
+colnames(mat.CA)<-column
+rownames(mat.CA)<-row
+mat.CA
+
+```
+####MI
+```{r}
+######comparing Holt-Winters’ and sarima######
+stat.MI<-c(MI.hw.mul$aic,sarima.MI$aic,MI.hw.mul$bic,sarima.MI$bic)
+mat.MI<-matrix(stat.MI,nrow=2,ncol=2,byrow=F)
+row<-c("holt mult","sarima")
+column<-c("aic","bic")
+colnames(mat.MI)<-column
+rownames(mat.MI)<-row
+mat.MI
+
+```
+##It can be seen that Holt-Winters’ have the lowest value for both aic and bic, thus sarima is the best model to forecast.
+
+
+### Extract All the Output for Final Markdown
+
+```{r}
+model_hw <- list(NY = NY.hw.add, LA = CA.hw.add, CH = CH.hw.add, MI = MI.hw.add, SF = SF.hw.add) 
+model_sarima <- list(NY = sarima.NY, LA = sarima.CA, CH = sarima.CH, MI = sarima.MI, SF = sarima.SF)
+
+forecast_hw <- list(0)
+for(i in 1:5){
+  forecast_hw[[i]] <- as.data.frame(forecast(model_hw[[i]],h=12))[,1]
+}
+
+forecast_sarima <- list(0)
+for(i in 1:5){
+  forecast_sarima[[i]] <- as.data.frame(forecast(model_sarima[[i]],h=12))[,1]
+}
+
+accuracy_hw <- list(0)
+for(i in 1:5){
+  accuracy_hw[[i]] <- as.data.frame(accuracy(forecast_hw[[i]], ts_1_test[,i]))
+}
+
+accuracy_sarima <- list(0)
+for(i in 1:5){
+  accuracy_sarima[[i]] <- as.data.frame(accuracy(forecast_sarima[[i]], ts_1_test[,i]))
+}
+
+
+saveRDS(model_hw,file=paste(dataPath,"model_hw.rds",sep="\\"))
+saveRDS(model_sarima,file=paste(dataPath,"model_sarima.rds",sep="\\"))
+saveRDS(forecast_hw,file=paste(dataPath,"forecast_hw.rds",sep="\\"))
+saveRDS(forecast_sarima,file=paste(dataPath,"forecast_sarima.rds",sep="\\"))
+saveRDS(accuracy_hw,file=paste(dataPath,"accuracy_hw.rds",sep="\\"))
+saveRDS(accuracy_sarima,file=paste(dataPath,"accuracy_sarima.rds",sep="\\"))
+
+
+```
